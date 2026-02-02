@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting...</title>
+    <style>
+      body { font-family: monospace; padding: 20px; background-color: #f0f0f0; }
+      .log-entry { margin-bottom: 5px; border-bottom: 1px solid #ccc; padding: 5px 0; background: white; padding: 10px; }
+      .error { color: red; border-left: 5px solid red; }
+      .success { color: green; border-left: 5px solid green; }
+      .info { color: blue; border-left: 5px solid blue; }
+    </style>
+    <script>
+      /**
+       * Configuration goes here
+       */
+      // Format: https://api.github.com/repos/{owner}/{repo}/issues/
+      var GITHUB_ISSUES_LINK =
+        "https://api.github.com/repos/Ezharjan/url/issues/";
+      // Set to 0 for custom domains, 1 for https://<user>.github.io/<repo>/
+      // Leave as null to auto-detect.
+      var PATH_SEGMENTS_TO_SKIP = null;
+
+      /**
+       * DO NOT TOUCH ANYTHING BELOW THIS COMMENT UNLESS YOU KNOW WHAT YOU ARE DOING
+       */
+      
+      function log(msg, type) {
+          console.log(msg);
+          // Wait for body to be ready if called early (though we run on onload)
+          if (document.body) {
+              var div = document.createElement("div");
+              div.className = "log-entry " + (type || "info");
+              div.innerText = new Date().toISOString() + ": " + msg;
+              document.body.appendChild(div);
+          }
+      }
+
+      function isUrl(string) {
+        try {
+          var url = new URL(string);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function decodeBase64(string) {
+        try {
+          return decodeURIComponent(
+            escape(atob(string.replace(/%(?:2B|2F|3D)/g, decodeURIComponent)))
+          );
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function extractUrlFromText(text) {
+        if (!text) return null;
+        var match = text.match(
+          /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,24}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)+/i
+        );
+        log("Text to extract URL from: " + (text ? text.substring(0, 50) + "..." : "null"));
+        var extracted = match ? match[0] : null;
+        log("Extracted URL: " + extracted);
+        return extracted;
+      }
+
+      function getRedirectUrl(issueData) {
+        if (!issueData) return null;
+
+        var base64Body = decodeBase64(issueData.body || "");
+        var base64Title = decodeBase64(issueData.title || "");
+
+        var candidate =
+          extractUrlFromText(base64Body) ||
+          extractUrlFromText(issueData.body) ||
+          extractUrlFromText(base64Title) ||
+          extractUrlFromText(issueData.title) ||
+          null;
+        log("Redirect candidate: " + candidate);
+        return candidate;
+      }
+
+      function tryRedirectByIssue(issueData, location, homepage) {
+        if (!issueData || issueData.message === "Not Found") {
+          log("Issue data not found or invalid", "error");
+          return false;
+        }
+
+        var redirectUrl = getRedirectUrl(issueData);
+        if (!redirectUrl) {
+          log("No URL found in issue", "error");
+          return false;
+        }
+
+        // Workaround IE 11 lack of support for new URL()
+        var url = document.createElement("a");
+        url.setAttribute("href", redirectUrl);
+
+        // MODIFIED: Original code blocked redirection to the same hostname.
+        // We only want to prevent infinite loops (redirecting to exactly self).
+        if (url.href === location.href) {
+             log("Target URL is identical to current location. Aborting to prevent loop.", "error");
+             return false;
+        }
+
+        log("SUCCESS! Redirecting to: " + redirectUrl + " in 3 seconds...", "success");
+        setTimeout(function() {
+             location.replace(redirectUrl);
+        }, 3000);
+        
+        return true;
+      }
+
+      function searchIssueByTitle(shortUrl, location, homepage) {
+        var searchXhr = new XMLHttpRequest();
+
+        searchXhr.onload = function () {
+          try {
+            var payload = JSON.parse(searchXhr.response);
+            var items = payload && payload.items ? payload.items : [];
+
+            if (items.length > 0) {
+              var matchedIssue = null;
+              for (var i = 0; i < items.length; i++) {
+                if (items[i].title.toLowerCase() === shortUrl.toLowerCase()) {
+                  matchedIssue = items[i];
+                  break;
+                }
+              }
+
+              if (matchedIssue && tryRedirectByIssue(matchedIssue, location, homepage)) {
+                return;
+              }
+            }
+
+            log("No matching issue found for title: " + shortUrl, "error");
+            log("Would default to homepage: " + homepage, "info");
+            // location.replace(homepage); // DISABLED
+          } catch (e) {
+            log("Error parsing search response: " + e, "error");
+            // location.replace(homepage); // DISABLED
+          }
+        };
+
+        searchXhr.onerror = function () {
+           log("Search XHR error", "error");
+           // location.replace(homepage); // DISABLED
+        };
+
+        var repoPath = GITHUB_ISSUES_LINK.replace(/https:\/\/api\.github\.com\/repos\//, "").replace(/\/issues\/$/, "");
+        var query = "repo:" + repoPath + " in:title " + shortUrl;
+        log("Searching issues with query: " + query);
+        searchXhr.open("GET", "https://api.github.com/search/issues?q=" + encodeURIComponent(query));
+        searchXhr.send();
+      }
+
+      function redirect() {
+        var location = window.location;
+        var pathParts = location.pathname.split("/");
+        
+        var skip =
+          PATH_SEGMENTS_TO_SKIP !== null
+            ? PATH_SEGMENTS_TO_SKIP
+            : (pathParts[1] && pathParts[1].toLowerCase() === 'url')
+            ? 1
+            : /\.github\.io$/i.test(location.hostname)
+            ? 1
+            : 0;
+        
+        log("Redirect script loaded (v2)");
+        log("Hostname: " + location.hostname);
+        log("Pathname: " + location.pathname);
+        log("Skip segments: " + skip);
+
+        // var pathParts = location.pathname.split("/"); // Moved up
+        var shortUrl = pathParts[skip + 1];
+        
+        var homepage =
+          location.protocol +
+          "//" +
+          location.hostname +
+          (location.port ? ":" + location.port : "") +
+          "/" +
+          pathParts[skip];
+
+        log("Calculated homepage: " + homepage);
+        log("Detected Short URL Key: " + shortUrl);
+
+        if (!shortUrl) {
+          log("No short URL key detected. Not redirecting.", "error");
+          return;
+        }
+
+        // First, try to treat shortUrl as an issue number
+        if (/^\d+$/.test(shortUrl)) {
+          log("Key looks like an issue number: " + shortUrl);
+          var xhr = new XMLHttpRequest();
+
+          xhr.onload = function () {
+            try {
+              var payload = JSON.parse(xhr.response);
+
+              if (tryRedirectByIssue(payload, location, homepage)) {
+                return;
+              }
+              
+              log("Issue lookup by number failed, trying search...", "info");
+              searchIssueByTitle(shortUrl, location, homepage);
+            } catch (e) {
+              log("Error parsing issue lookup response: " + e, "error");
+              // location.replace(homepage);
+            }
+          };
+
+          xhr.onerror = function () {
+            log("Issue lookup XHR error", "error");
+            searchIssueByTitle(shortUrl, location, homepage);
+          };
+
+          xhr.open("GET", GITHUB_ISSUES_LINK + shortUrl);
+          xhr.send();
+        } else {
+          // Not a number, search by title
+          log("Key is not a number, searching by title...");
+          searchIssueByTitle(shortUrl, location, homepage);
+        }
+      }
+      
+      window.onload = redirect;
+    </script>
+  </head>
+  <body>
+      <h1>Redirection Debug Mode</h1>
+      <div id="logs"></div>
+  </body>
+</html>
