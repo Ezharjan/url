@@ -2,13 +2,66 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Redirecting...</title>
     <style>
-      body { font-family: monospace; padding: 20px; background-color: #f0f0f0; }
-      .log-entry { margin-bottom: 5px; border-bottom: 1px solid #ccc; padding: 5px 0; background: white; padding: 10px; }
-      .error { color: red; border-left: 5px solid red; }
-      .success { color: green; border-left: 5px solid green; }
-      .info { color: blue; border-left: 5px solid blue; }
+      :root {
+        --primary: #0969da;
+        --bg: #f3f6f9;
+        --text: #24292f;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        background-color: var(--bg);
+        color: var(--text);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+        text-align: center;
+      }
+      .container {
+        padding: 2rem;
+      }
+      .spinner {
+        border: 3px solid rgba(0, 0, 0, 0.1);
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border-left-color: var(--primary);
+        animation: spin 1s linear infinite;
+        margin: 0 auto 1.5rem;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      #message {
+        font-size: 1.1rem;
+        color: #57606a;
+      }
+      .error-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        display: none;
+      }
+      .home-btn {
+        display: none;
+        margin-top: 1.5rem;
+        background-color: var(--primary);
+        color: white;
+        text-decoration: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 600;
+        transition: background-color 0.2s;
+      }
+      .home-btn:hover {
+        background-color: #0a58ca;
+      }
+      /* Hide logs by default */
+      .log-entry { display: none; }
     </style>
     <script>
       /**
@@ -26,14 +79,22 @@
        */
       
       function log(msg, type) {
-          console.log(msg);
-          // Wait for body to be ready if called early (though we run on onload)
-          if (document.body) {
-              var div = document.createElement("div");
-              div.className = "log-entry " + (type || "info");
-              div.innerText = new Date().toISOString() + ": " + msg;
-              document.body.appendChild(div);
-          }
+          console.log(msg); // Keep console logs
+      }
+
+      function showMessage(msg, isError) {
+        var el = document.getElementById("message");
+        if (el) el.textContent = msg;
+        if (isError) {
+           document.querySelector(".spinner").style.display = "none";
+           var icon = document.querySelector(".error-icon");
+           if (icon) {
+             icon.style.display = "block";
+             icon.textContent = "😕";
+           }
+           var btn = document.querySelector(".home-btn");
+           if (btn) btn.style.display = "inline-block";
+        }
       }
 
       function isUrl(string) {
@@ -99,17 +160,15 @@
         url.setAttribute("href", redirectUrl);
 
         // MODIFIED: Original code blocked redirection to the same hostname.
-        // We only want to prevent infinite loops (redirecting to exactly self).
         if (url.href === location.href) {
-             log("Target URL is identical to current location. Aborting to prevent loop.", "error");
+             log("Target URL is identical to current location. Aborting to prevent loop.");
+             showMessage("Target URL loop detected.", true);
              return false;
         }
-
-        log("SUCCESS! Redirecting to: " + redirectUrl + " in 3 seconds...", "success");
-        setTimeout(function() {
-             location.replace(redirectUrl);
-        }, 3000);
         
+        // Success
+        log("Redirecting to: " + redirectUrl);
+        location.replace(redirectUrl);
         return true;
       }
 
@@ -135,18 +194,18 @@
               }
             }
 
-            log("No matching issue found for title: " + shortUrl, "error");
-            log("Would default to homepage: " + homepage, "info");
-            // location.replace(homepage); // DISABLED
+            log("No matching issue found for title: " + shortUrl);
+            showMessage("Link not found", true);
+            
           } catch (e) {
-            log("Error parsing search response: " + e, "error");
-            // location.replace(homepage); // DISABLED
+            log("Error parsing search response: " + e);
+            showMessage("Error searching for link", true);
           }
         };
 
         searchXhr.onerror = function () {
-           log("Search XHR error", "error");
-           // location.replace(homepage); // DISABLED
+           log("Search XHR error");
+           showMessage("Connection error", true);
         };
 
         var repoPath = GITHUB_ISSUES_LINK.replace(/https:\/\/api\.github\.com\/repos\//, "").replace(/\/issues\/$/, "");
@@ -169,13 +228,17 @@
             ? 1
             : 0;
         
-        log("Redirect script loaded (v2)");
-        log("Hostname: " + location.hostname);
-        log("Pathname: " + location.pathname);
-        log("Skip segments: " + skip);
-
-        // var pathParts = location.pathname.split("/"); // Moved up
+        log("Redirect script loaded");
+        
         var shortUrl = pathParts[skip + 1];
+
+        // Clean trailing slash if present
+        if (!shortUrl && pathParts.length > skip + 1) {
+             // Maybe it was url/123/
+             if (pathParts[skip+1] === "" && pathParts[skip]) {
+                 // edge case
+             }
+        }
         
         var homepage =
           location.protocol +
@@ -185,11 +248,10 @@
           "/" +
           pathParts[skip];
 
-        log("Calculated homepage: " + homepage);
-        log("Detected Short URL Key: " + shortUrl);
-
         if (!shortUrl) {
-          log("No short URL key detected. Not redirecting.", "error");
+          log("No short URL key detected.");
+          // If no key, just go to homepage or show 404
+          window.location.replace(homepage);
           return;
         }
 
@@ -206,16 +268,16 @@
                 return;
               }
               
-              log("Issue lookup by number failed, trying search...", "info");
+              log("Issue lookup by number failed, trying search...");
               searchIssueByTitle(shortUrl, location, homepage);
             } catch (e) {
-              log("Error parsing issue lookup response: " + e, "error");
-              // location.replace(homepage);
+              log("Error parsing issue lookup response: " + e);
+              searchIssueByTitle(shortUrl, location, homepage);
             }
           };
 
           xhr.onerror = function () {
-            log("Issue lookup XHR error", "error");
+            log("Issue lookup XHR error");
             searchIssueByTitle(shortUrl, location, homepage);
           };
 
@@ -232,7 +294,11 @@
     </script>
   </head>
   <body>
-      <h1>Redirection Debug Mode</h1>
-      <div id="logs"></div>
+    <div class="container">
+      <div class="error-icon"></div>
+      <div class="spinner"></div>
+      <div id="message">Redirecting...</div>
+      <a href="/url/" class="home-btn">Go Home</a>
+    </div>
   </body>
 </html>
